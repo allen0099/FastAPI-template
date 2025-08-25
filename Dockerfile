@@ -1,41 +1,50 @@
-FROM python:3.11-slim AS base
+FROM python:3.12-slim AS base
+
+ENV VIRTUAL_ENV="/opt/venv"
+ENV UV_PROJECT_ENVIRONMENT="$VIRTUAL_ENV"
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+FROM ghcr.io/astral-sh/uv:latest AS uv
+
+FROM base AS library
+
+COPY --from=uv /uv /uvx /bin/
+
+# Install git so we can install packages from git repos
+RUN apt-get update && \
+    apt-get install --yes --no-install-recommends git
+
+COPY pyproject.toml .
+
+RUN uv sync --no-dev
+
+FROM base AS production
+
+# Upgrade components
+RUN pip install --upgrade --no-cache-dir pip
+
+# Install curl for healthchecks
+RUN apt-get update && \
+    apt-get install --yes --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy python dependencies from the library stage
+COPY --from=library /opt/venv /opt/venv
+
+# TODO: change to non-root user
+
+FROM production
 
 WORKDIR /app
 
-# Security
-ENV USERNAME=user
+# Copy entrypoint script
+COPY docker-entrypoint.sh /
 
-RUN groupadd -r $USERNAME && \
-    useradd -r -g $USERNAME $USERNAME
+# Copy application code
+COPY . /app
 
-FROM base AS builder
+# Expose default proxy headers and set production environment
+ENV PROJECT__ENVIRONMENT="production"
+ENV FORWARDED_ALLOW_IPS="127.0.0.1"
 
-COPY requirements.txt .
-
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-RUN set -eux; \
-    apt-get update && \
-    apt-get install --yes --no-install-recommends git && \
-    # Upgrade pip and wheel
-    /opt/venv/bin/python -m pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir wheel && \
-    # Install the dependencies
-    pip install --no-cache-dir -r requirements.txt && \
-    # Clean up git
-    apt-get remove --yes git && \
-    apt-get autoremove --yes && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-FROM base AS app
-
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-COPY . .
-
-USER $USERNAME
-
-CMD ["python", "app/api.py"]
+ENTRYPOINT ["/docker-entrypoint.sh"]

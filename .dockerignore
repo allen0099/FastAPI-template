@@ -1,9 +1,0 @@
-.git
-*ignore
-README.*
-
-Dockerfile
-docker-compose.yml
-docker-compose.yaml
-
-_environments.json
